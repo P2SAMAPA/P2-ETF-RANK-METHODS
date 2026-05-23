@@ -13,6 +13,16 @@ def load_master_data():
         df.set_index('date', inplace=True)
     return df
 
+def prepare_returns_matrix(df, universe_tickers):
+    returns = pd.DataFrame(index=df.index)
+    for ticker in universe_tickers:
+        if ticker in df.columns:
+            price = df[ticker]
+            if not price.isna().all():
+                returns[ticker] = np.log(price / price.shift(1))
+    returns = returns.dropna(how='all')
+    return returns
+
 def prepare_price_matrix(df, universe_tickers):
     prices = pd.DataFrame(index=df.index)
     for ticker in universe_tickers:

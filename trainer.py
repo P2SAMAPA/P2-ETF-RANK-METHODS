@@ -30,8 +30,6 @@ def main():
     for universe_name, tickers in config.UNIVERSES.items():
         print(f"\n=== Universe: {universe_name} (Rank Methods) ===")
         prices = data_manager.prepare_price_matrix(df, tickers)
-        volumes = data_manager.prepare_volume_matrix(df, tickers)
-        # Returns needed for group rank
         returns = data_manager.prepare_returns_matrix(df, tickers)
         if prices.empty or len(prices) < max(config.WINDOWS) + 10:
             print("  Insufficient data")
@@ -47,29 +45,34 @@ def main():
                 continue
             print(f"  Processing window {win}d...")
             prices_win = prices.iloc[-win:]
-            volumes_win = volumes.iloc[-win:]
             returns_win = returns.iloc[-win:] if not returns.empty else pd.DataFrame(0, index=prices_win.index, columns=tickers)
             # Compute raw components for all ETFs
             raw_scores = {}
             for etf in tickers:
-                if etf not in prices_win.columns or etf not in volumes_win.columns:
+                if etf not in prices_win.columns:
                     continue
-                comp = compute_composite_score(prices_win[etf], volumes_win[etf], returns_win, etf, win)
+                comp = compute_composite_score(prices_win[etf], returns_win, etf, win)
                 raw_scores[etf] = comp
             if not raw_scores:
                 continue
-            # Normalise RS and momentum across ETFs (convert to percentiles)
-            rs_vals = [raw_scores[etf]["rs"] for etf in raw_scores]
-            mom_vals = [raw_scores[etf]["mom"] for etf in raw_scores]
-            eps_vals = [raw_scores[etf]["eps"] for etf in raw_scores]
-            # Compute percentiles (higher = better)
-            rs_pct = pd.Series(rs_vals).rank(pct=True).values
-            mom_pct = pd.Series(mom_vals).rank(pct=True).values
-            eps_pct = pd.Series(eps_vals).rank(pct=True).values
-            # Composite score: equal weight of RS, momentum, volume surge, earnings surrogate, group rank
+            # Normalise each factor across ETFs (percentile rank)
+            rs_vals = np.array([raw_scores[etf]["rs"] for etf in raw_scores])
+            mom_vals = np.array([raw_scores[etf]["mom"] for etf in raw_scores])
+            eps_vals = np.array([raw_scores[etf]["eps"] for etf in raw_scores])
+            # If all values are identical, percentile rank will be 0.5; handle NaN
+            def safe_rank(arr):
+                # Replace NaN with 0
+                arr = np.nan_to_num(arr, nan=0.0)
+                if np.all(arr == arr[0]):
+                    return np.full(len(arr), 0.5)
+                return pd.Series(arr).rank(pct=True).values
+            rs_pct = safe_rank(rs_vals)
+            mom_pct = safe_rank(mom_vals)
+            eps_pct = safe_rank(eps_vals)
+            # Composite score: equal weight (group_rank already 0-1)
             composite_scores = {}
             for i, etf in enumerate(raw_scores):
-                score = (rs_pct[i] + mom_pct[i] + raw_scores[etf]["vol_surge"] + eps_pct[i] + raw_scores[etf]["group_rank"]) / 5.0
+                score = (rs_pct[i] + mom_pct[i] + eps_pct[i] + raw_scores[etf]["group_rank"]) / 4.0
                 composite_scores[etf] = score
             window_results[win] = composite_scores
             for etf, score in composite_scores.items():
